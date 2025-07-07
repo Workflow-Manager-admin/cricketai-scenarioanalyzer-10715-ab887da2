@@ -28,9 +28,18 @@ app = FastAPI(
     ],
 )
 
+# --- CORS Configuration for React Frontend ---
+# Allow localhost (dev) and production domain to enable secure cross-origin requests from React UI.
+origins = [
+    "http://localhost:3000",                # Local React dev server
+    "http://127.0.0.1:3000",
+    "https://localhost:3000",
+    # PRODUCTION: Add production frontend domain here as needed
+    "https://vscode-internal-0401-beta.beta01.cloud.kavia.ai:3000",  # Preview/production domain (if using multi-container env)
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
