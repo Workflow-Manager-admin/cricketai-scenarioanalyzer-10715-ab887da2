@@ -1,9 +1,19 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Union
 import random
+
+# --- Import live cricket scrape logic ---
+import sys
+import os
+LIVE_CRICKET_PATH = os.path.join(os.path.dirname(__file__), "live_cricket.py")
+if LIVE_CRICKET_PATH not in sys.modules:
+    # classic import workaround for src/api/live_cricket.py
+    from . import live_cricket
+else:
+    import live_cricket
 
 # --- FASTAPI APP SETUP ---
 app = FastAPI(
@@ -193,6 +203,55 @@ def get_visualizations(match_id: Optional[str] = None):
         bowlers_performance=bowlers_performance
     )
 
+# --- LIVE MATCH ENDPOINT ---
+
+# PUBLIC_INTERFACE
+class LiveMatchDetails(BaseModel):
+    """Schema for live cricket match details as scraped from Google."""
+    team_a: str = Field(..., description="Name of Team A")
+    team_b: str = Field(..., description="Name of Team B")
+    score_a: str = Field(..., description="Score for Team A (runs/wickets)")
+    score_b: str = Field(..., description="Score for Team B (runs/wickets)")
+    overs: str = Field(..., description="Current over if available, e.g. '14.2'")
+    status: str = Field(..., description="Current match status: 'Live', 'Complete', or progress description")
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/live-match-details",
+    response_model=List[LiveMatchDetails],
+    tags=["Live Data"],
+    summary="Fetch live cricket match details",
+    description="""
+Fetch live cricket match details scraped from Google.
+Returns a list of ongoing or recent matches, with teams, scores, overs, and match status.
+Data is scraped in real-time from the public Google search page for "cricket match".
+""",
+    responses={
+        200: {"description": "List of live cricket match details"},
+        404: {"description": "No matches found or scraping failed"},
+        500: {"description": "Internal error during fetch/scraping"}
+    }
+)
+def get_live_match_details():
+    """
+    Get a list of live cricket match details by scraping Google search for "cricket match".
+
+    Returns:
+        200: List of match objects if found.
+        404: No data found (no live matches or structure changed).
+        500: Scraping/connection failure.
+    """
+    try:
+        matches = live_cricket.fetch_live_cricket_details("cricket match")
+        if matches is None or len(matches) == 0:
+            raise HTTPException(status_code=404, detail="No live matches found (or Google result structure changed).")
+        # Return as pydantic-validated models (avoids missing fields)
+        return [LiveMatchDetails.model_validate(m) for m in matches]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Live match fetch error: {str(e)}")
+
 # --- OPENAPI ENHANCEMENT (for clarity in docs) ---
 def custom_openapi():
     if app.openapi_schema:
@@ -200,7 +259,7 @@ def custom_openapi():
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
-        description=app.description + "\n\nNotes:\n- All endpoints return example data only by default. Backend ready for extension with real AI and data sources.\n- Use scenario_id and question_id returned from prior endpoints as required.",
+        description=app.description + "\n\nNotes:\n- All endpoints return example data only by default, except `/live-match-details` which fetches real data from Google scraping.\n- Use scenario_id and question_id returned from prior endpoints as required.\n- The `/live-match-details` endpoint may break if Google's public search results layout changes.",
         routes=app.routes,
         tags=app.openapi_tags
     )
